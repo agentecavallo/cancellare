@@ -2,67 +2,82 @@ import streamlit as st
 import pandas as pd
 from geopy.geocoders import Nominatim
 import time
+import re
 
-# Configurazione pagina
-st.set_page_config(page_title="Geolocalizzatore Rivenditori", layout="centered")
+# Configurazione Pagina
+st.set_page_config(page_title="Base Protection - Area Manager Tool", page_icon="🥾")
 
-st.title("📍 Assegnazione Regioni Rivenditori")
-st.write("Carica il tuo file Excel con le ragioni sociali e io cercherò la regione di appartenenza.")
+st.title("📍 Localizzatore Rivenditori Michele")
+st.markdown("""
+Questo strumento cerca la **Regione** dei tuoi rivenditori partendo dalla Ragione Sociale.
+*Nota: Utilizza OpenStreetMap (Gratuito). Se il nome è troppo generico, potrebbe non trovarlo.*
+""")
 
-# Inizializza il geolocalizzatore
-geolocator = Nominatim(user_agent="michele_area_manager_app")
+# Inizializzazione Geocoder
+geolocator = Nominatim(user_agent="michele_base_tool_v2")
 
-def get_region(name):
+def pulisci_nome(nome):
+    """Rimuove sigle societarie per facilitare la ricerca"""
+    nome = str(nome).upper()
+    sigle = [r'\bSRL\b', r'\bSPA\b', r'\bS\.R\.L\.\b', r'\bS\.P\.A\.\b', r'\bSAS\b', r'\bSNC\b']
+    for sigla in sigle:
+        nome = re.sub(sigla, '', nome)
+    return nome.strip()
+
+def get_info(ragione_sociale):
+    nome_pulito = pulisci_nome(ragione_sociale)
     try:
-        # Cerchiamo solo in Italia per maggiore precisione
-        location = geolocator.geocode(f"{name}, Italia", addressdetails=True, timeout=10)
+        # Cerchiamo l'azienda in Italia
+        location = geolocator.geocode(f"{nome_pulito}, Italia", addressdetails=True, timeout=10)
+        
         if location and 'address' in location.raw:
-            return location.raw['address'].get('state', 'Non trovata')
-        return "Non trovato"
+            addr = location.raw['address']
+            # Estraiamo Regione e Provincia
+            regione = addr.get('state', 'Non trovata')
+            provincia = addr.get('county', 'Non trovata')
+            return regione, provincia
+        return "Non trovato", "Non trovata"
     except:
-        return "Errore connessione"
+        return "Errore connessione", "Errore"
 
-uploaded_file = st.file_uploader("Scegli un file Excel", type="xlsx")
+# Caricamento File
+uploaded_file = st.file_uploader("Carica il tuo file Excel", type=["xlsx"])
 
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
+    colonna = st.selectbox("Seleziona la colonna con i nomi delle aziende:", df.columns)
     
-    colonna_scelta = st.selectbox("Seleziona la colonna con la Ragione Sociale:", df.columns)
-    
-    if st.button("Avvia Elaborazione"):
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        results = []
+    if st.button("🚀 Avvia Ricerca"):
+        bar = st.progress(0)
+        status = st.empty()
         
-        total = len(df)
+        regioni = []
+        province = []
         
         for i, row in df.iterrows():
-            nome_azienda = row[colonna_scelta]
-            status_text.text(f"Ricerca in corso per: {nome_azienda} ({i+1}/{total})")
+            nome = row[colonna]
+            status.text(f"Analizzando: {nome}...")
             
-            regione = get_region(nome_azienda)
-            results.append(regione)
+            reg, prov = get_info(nome)
+            regioni.append(reg)
+            province.append(prov)
             
-            # Aggiorna barra progresso
-            progress_bar.progress((i + 1) / total)
+            # Aggiornamento progresso
+            bar.progress((i + 1) / len(df))
+            # Pausa obbligatoria per non essere bloccati dal server (gratuito)
+            time.sleep(1.1)
             
-            # Rispetto delle policy di OpenStreetMap (1 richiesta al secondo)
-            time.sleep(1)
+        df['Regione_Trovata'] = regioni
+        df['Provincia_Trovata'] = province
         
-        df['Regione_Trovata'] = results
-        st.success("Elaborazione completata!")
+        st.success("✅ Analisi completata!")
+        st.dataframe(df)
         
-        # Anteprima e Download
-        st.dataframe(df.head(10))
-        
-        @st.cache_data
-        def convert_df(df_to_save):
-            return df_to_save.to_csv(index=False).encode('utf-8')
-
-        csv = convert_df(df)
+        # Preparazione Download
+        csv = df.to_csv(index=False).encode('utf-8')
         st.download_button(
-            label="Scarica Risultato in CSV",
+            label="📥 Scarica Risultati (CSV)",
             data=csv,
-            file_name="rivenditori_regioni.csv",
+            file_name="rivenditori_regioni_michele.csv",
             mime="text/csv",
         )
