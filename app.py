@@ -1,83 +1,63 @@
 import streamlit as st
 import pandas as pd
-from geopy.geocoders import Nominatim
+from duckduckgo_search import DDGS
 import time
 import re
 
-# Configurazione Pagina
-st.set_page_config(page_title="Base Protection - Area Manager Tool", page_icon="🥾")
+st.set_page_config(page_title="Base Protection - Pro Finder", page_icon="🥾")
 
-st.title("📍 Localizzatore Rivenditori Michele")
-st.markdown("""
-Questo strumento cerca la **Regione** dei tuoi rivenditori partendo dalla Ragione Sociale.
-*Nota: Utilizza OpenStreetMap (Gratuito). Se il nome è troppo generico, potrebbe non trovarlo.*
-""")
+st.title("🚀 Localizzatore Avanzato Rivenditori")
+st.write("Questo metodo cerca su internet la sede delle aziende. È molto più preciso!")
 
-# Inizializzazione Geocoder
-geolocator = Nominatim(user_agent="michele_base_tool_v2")
-
-def pulisci_nome(nome):
-    """Rimuove sigle societarie per facilitare la ricerca"""
-    nome = str(nome).upper()
-    sigle = [r'\bSRL\b', r'\bSPA\b', r'\bS\.R\.L\.\b', r'\bS\.P\.A\.\b', r'\bSAS\b', r'\bSNC\b']
-    for sigla in sigle:
-        nome = re.sub(sigla, '', nome)
-    return nome.strip()
-
-def get_info(ragione_sociale):
-    nome_pulito = pulisci_nome(ragione_sociale)
+def trova_regione_web(nome_azienda):
+    regioni_italia = [
+        "Abruzzo", "Basilicata", "Calabria", "Campania", "Emilia-Romagna", 
+        "Friuli-Venezia Giulia", "Lazio", "Liguria", "Lombardia", "Marche", 
+        "Molise", "Piemonte", "Puglia", "Sardegna", "Sicilia", "Toscana", 
+        "Trentino-Alto Adige", "Umbria", "Valle d'Aosta", "Veneto"
+    ]
+    
     try:
-        # Cerchiamo l'azienda in Italia
-        location = geolocator.geocode(f"{nome_pulito}, Italia", addressdetails=True, timeout=10)
-        
-        if location and 'address' in location.raw:
-            addr = location.raw['address']
-            # Estraiamo Regione e Provincia
-            regione = addr.get('state', 'Non trovata')
-            provincia = addr.get('county', 'Non trovata')
-            return regione, provincia
-        return "Non trovato", "Non trovata"
-    except:
-        return "Errore connessione", "Errore"
+        with DDGS() as ddgs:
+            # Cerchiamo l'azienda + "sede legale" o "contatti"
+            query = f"{nome_azienda} sede legale regione"
+            results = list(ddgs.text(query, max_results=3))
+            
+            # Uniamo i testi dei primi risultati per analizzarli
+            testo_completo = " ".join([r['body'] for r in results]).lower()
+            
+            # Cerchiamo se nel testo appare una delle regioni italiane
+            for regione in regioni_italia:
+                if regione.lower() in testo_completo:
+                    return regione
+        return "Non trovato"
+    except Exception as e:
+        return f"Errore ricerca"
 
-# Caricamento File
-uploaded_file = st.file_uploader("Carica il tuo file Excel", type=["xlsx"])
+uploaded_file = st.file_uploader("Carica Excel", type=["xlsx"])
 
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
-    colonna = st.selectbox("Seleziona la colonna con i nomi delle aziende:", df.columns)
+    colonna = st.selectbox("Colonna Ragione Sociale:", df.columns)
     
-    if st.button("🚀 Avvia Ricerca"):
+    if st.button("Avvia Ricerca Intelligente"):
         bar = st.progress(0)
         status = st.empty()
-        
-        regioni = []
-        province = []
+        risultati = []
         
         for i, row in df.iterrows():
             nome = row[colonna]
-            status.text(f"Analizzando: {nome}...")
+            status.text(f"Cercando sul web: {nome}...")
             
-            reg, prov = get_info(nome)
-            regioni.append(reg)
-            province.append(prov)
+            regione = trova_regione_web(nome)
+            risultati.append(regione)
             
-            # Aggiornamento progresso
             bar.progress((i + 1) / len(df))
-            # Pausa obbligatoria per non essere bloccati dal server (gratuito)
-            time.sleep(1.1)
+            time.sleep(1.5) # Pausa per non essere scambiati per bot
             
-        df['Regione_Trovata'] = regioni
-        df['Provincia_Trovata'] = province
-        
-        st.success("✅ Analisi completata!")
+        df['Regione_Trovata'] = risultati
+        st.success("Completato!")
         st.dataframe(df)
         
-        # Preparazione Download
         csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="📥 Scarica Risultati (CSV)",
-            data=csv,
-            file_name="rivenditori_regioni_michele.csv",
-            mime="text/csv",
-        )
+        st.download_button("Scarica Risultati", csv, "rivenditori_web.csv", "text/csv")
